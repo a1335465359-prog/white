@@ -80,3 +80,20 @@ npm run start
    - 如果发生失败，可点击对应的卡片“重试”。
 6. **保存与打包**：单张可直接保存；点击“保存全部”会在浏览器本地生成 ZIP，其中分别包含 `白底主图/` 与 `细节图/` 目录。
 7. **重置**：处理完当前批次，点击“一键清空重置工作区”，系统会同步物理清空磁盘和数据库，开启下一批次的无感创作！
+
+---
+
+## 🐘 无系统 PostgreSQL 环境（如 Arena 沙箱）的本地数据库
+
+若环境里无法通过 `apt` / Docker 安装 PostgreSQL，项目依赖里已内置 Linux x64 的
+PostgreSQL 二进制（`@embedded-postgres/linux-x64`），可直接启动一个本地实例：
+
+```bash
+# 1. 安装依赖（会自动带上嵌入式 PostgreSQL 二进制）
+npm install
+
+# 2. 启动本地 PostgreSQL（默认 127.0.0.1:5432，数据目录 ./.pgdata）
+./scripts/start-db.sh
+```
+
+然后按上面的流程：创建数据库 → `npx drizzle-kit push` → `npm run build` → `npm run start`。
