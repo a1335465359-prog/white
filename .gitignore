@@ -18,6 +18,9 @@ next-env.d.ts
 # runtime storage (uploaded & processed images)
 /storage/
 
+# local embedded postgres data dir
+/.pgdata/
+
 # drizzle migrations output
 /drizzle/
 
