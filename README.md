@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/31263392/README.md)
 # AI 批量服装白底图工具 (Apparel White Background Tool)
 
 这是一个简单、高效、可运行的**批量服装白底图精修工具**。用户可以一次性批量上传约200张服装商品图，系统会安全调度队列、自动管理高并发，并逐张调用高画质图像精修模型，将原图处理为干净、专业的纯白底（`#FFFFFF`）电商白底图。

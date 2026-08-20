@@ -1,79 +1,85 @@
-import { NextResponse } from "next/server";
-import { db } from "@/db";
-import { detailTasks, tasks } from "@/db/schema";
-import { queueState } from "@/lib/taskQueue";
-import { desc } from "drizzle-orm";
+import { NextRequest, NextResponse } from "next/server";
+import fs from "fs";
+import path from "path";
 
-/**
- * Legacy task rows stored bare /uploads/... or /processed/... URLs that
- * pointed directly at public/ (not served in production for runtime files).
- * Rewrite them to go through the /api/files serving route.
- */
-function normalizeUrl(url: string | null): string | null {
-  if (!url) return null;
-  if (url.startsWith("/uploads/") || url.startsWith("/processed/")) {
-    return `/api/files${url}`;
-  }
-  return url;
+const MIME_TYPES: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".bmp": "image/bmp",
+};
+
+function getMimeType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  return MIME_TYPES[ext] || "application/octet-stream";
 }
 
-export async function GET() {
+/**
+ * Serves files from the storage directory via API.
+ * Also falls back to public/ for backward compatibility.
+ *
+ * URL format: /api/files/uploads/filename.jpg
+ *             /api/files/processed/filename_white.jpg
+ */
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ path: string[] }> }
+) {
   try {
-    // Fetch all tasks from the DB, newest first
-    const [rawTasks, rawDetails] = await Promise.all([
-      db.select().from(tasks).orderBy(desc(tasks.id)),
-      db.select().from(detailTasks).orderBy(desc(detailTasks.id)),
-    ]);
+    const { path: urlSegments } = await params;
 
-    const detailsByTask = new Map<number, typeof rawDetails>();
-    for (const detail of rawDetails) {
-      const bucket = detailsByTask.get(detail.taskId) ?? [];
-      bucket.push({ ...detail, resultUrl: normalizeUrl(detail.resultUrl) });
-      detailsByTask.set(detail.taskId, bucket);
+    if (!urlSegments || urlSegments.length === 0) {
+      return NextResponse.json({ error: "No file path provided" }, { status: 400 });
     }
 
-    const allTasks = rawTasks.map((t) => ({
-      ...t,
-      originalUrl: normalizeUrl(t.originalUrl),
-      processedUrl: normalizeUrl(t.processedUrl),
-      details: detailsByTask.get(t.id) ?? [],
-    }));
+    const relativePath = urlSegments.join("/");
 
-    const detailStats = { pending: 0, processing: 0, success: 0, failed: 0, total: rawDetails.length };
-    for (const detail of rawDetails) {
-      detailStats[detail.status] += 1;
+    // Security: Only allow uploads/ and processed/ subdirectories
+    const allowedPrefixes = ["uploads/", "processed/"];
+    if (!allowedPrefixes.some((prefix) => relativePath.startsWith(prefix))) {
+      return NextResponse.json({ error: "Invalid file path" }, { status: 403 });
     }
 
-    // Calculate counts in a simple iteration
-    let pending = 0;
-    let processing = 0;
-    let success = 0;
-    let failed = 0;
+    // Primary location: storage/
+    const storageDir = path.join(process.cwd(), "storage");
+    const absolutePath = path.join(storageDir, relativePath);
 
-    for (const t of allTasks) {
-      if (t.status === "pending") pending++;
-      else if (t.status === "processing") processing++;
-      else if (t.status === "success") success++;
-      else if (t.status === "failed") failed++;
+    // Prevent directory traversal
+    if (!absolutePath.startsWith(storageDir)) {
+      return NextResponse.json({ error: "Invalid file path" }, { status: 403 });
     }
 
-    return NextResponse.json({
-      tasks: allTasks,
-      queue: {
-        status: queueState.status,
-        concurrency: queueState.concurrency,
-        activeCount: queueState.activeCount,
+    let filePath = absolutePath;
+
+    // Check storage/ first, then fallback to public/
+    if (!fs.existsSync(absolutePath)) {
+      const publicFallback = path.join(process.cwd(), "public", relativePath);
+      if (fs.existsSync(publicFallback)) {
+        filePath = publicFallback;
+      } else {
+        return NextResponse.json({ error: "File not found" }, { status: 404 });
+      }
+    }
+
+    const fileBuffer = fs.readFileSync(filePath);
+    const contentType = getMimeType(filePath);
+
+    return new NextResponse(fileBuffer, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": "public, max-age=31536000, immutable",
       },
-      stats: {
-        pending,
-        processing,
-        success,
-        failed,
-        total: allTasks.length,
-      },
-      detailStats,
     });
   } catch (err: any) {
-    return NextResponse.json({ error: "Failed to retrieve tasks: " + err.message }, { status: 500 });
+    console.error("File serving error:", err);
+    return NextResponse.json(
+      { error: "Failed to serve file: " + err.message },
+      { status: 500 }
+    );
   }
 }
